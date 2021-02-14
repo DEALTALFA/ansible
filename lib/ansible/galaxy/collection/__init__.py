@@ -25,7 +25,6 @@ from distutils.version import LooseVersion
 from hashlib import sha256
 from io import BytesIO
 from itertools import chain
-from resolvelib.resolvers import InconsistentCandidate
 from yaml.error import YAMLError
 
 # NOTE: Adding type ignores is a hack for mypy to shut up wrt bug #1153
@@ -108,7 +107,7 @@ from ansible.galaxy.dependency_resolution import (
     build_collection_dependency_resolver,
 )
 from ansible.galaxy.dependency_resolution.dataclasses import (
-    Candidate, Requirement,
+    Candidate, Requirement, _is_installed_collection_dir,
 )
 from ansible.galaxy.dependency_resolution.errors import (
     CollectionDependencyResolutionImpossible,
@@ -286,6 +285,7 @@ def download_collections(
             concrete_artifacts_manager=artifacts_manager,
             no_deps=no_deps,
             allow_pre_release=allow_pre_release,
+            upgrade=False,
         )
 
     b_output_path = to_bytes(output_path, errors='surrogate_or_strict')
@@ -407,6 +407,7 @@ def install_collections(
         no_deps,  # type: bool
         force,  # type: bool
         force_deps,  # type: bool
+        upgrade,  # type: bool
         allow_pre_release,  # type: bool
         artifacts_manager,  # type: ConcreteArtifactsManager
 ):  # type: (...) -> None
@@ -451,7 +452,7 @@ def install_collections(
         if req.fqcn == exs.fqcn and meets_requirements(exs.ver, req.ver)
     }
 
-    if not unsatisfied_requirements:
+    if not unsatisfied_requirements and not upgrade:
         display.display(
             'Nothing to do. All requested collections are already '
             'installed. If you want to reinstall them, '
@@ -476,42 +477,15 @@ def install_collections(
         for coll in preferred_requirements
     }
     with _display_progress("Process install dependency map"):
-        try:
-            dependency_map = _resolve_depenency_map(
-                collections,
-                galaxy_apis=apis,
-                preferred_candidates=preferred_collections,
-                concrete_artifacts_manager=artifacts_manager,
-                no_deps=no_deps,
-                allow_pre_release=allow_pre_release,
-            )
-        except InconsistentCandidate as inconsistent_candidate_exc:
-            # FIXME: Processing this error is hacky and should be removed along
-            # FIXME: with implementing the automatic replacement for installed
-            # FIXME: collections.
-            if not all(
-                    inconsistent_candidate_exc.candidate.fqcn == r.fqcn
-                    for r in inconsistent_candidate_exc.criterion.iter_requirement()
-            ):
-                raise
-
-            req_info = inconsistent_candidate_exc.criterion.information[0]
-            force_flag = (
-                '--force' if req_info.parent is None
-                else '--force-with-deps'
-            )
-            raise_from(
-                AnsibleError(
-                    'Cannot meet requirement {collection!s} as it is already '
-                    "installed at version '{installed_ver!s}'. "
-                    'Use {force_flag!s} to overwrite'.format(
-                        collection=req_info.requirement,
-                        force_flag=force_flag,
-                        installed_ver=inconsistent_candidate_exc.candidate.ver,
-                    )
-                ),
-                inconsistent_candidate_exc,
-            )
+        dependency_map = _resolve_depenency_map(
+            collections,
+            galaxy_apis=apis,
+            preferred_candidates=preferred_collections,
+            concrete_artifacts_manager=artifacts_manager,
+            no_deps=no_deps,
+            allow_pre_release=allow_pre_release,
+            upgrade=upgrade,
+        )
 
     with _display_progress("Starting collection install process"):
         for fqcn, concrete_coll_pin in dependency_map.items():
@@ -606,6 +580,7 @@ def verify_collections(
                 # NOTE: Verify local collection exists before
                 # NOTE: downloading its source artifact from
                 # NOTE: a galaxy server.
+                default_err = 'Collection %s is not installed in any of the collection paths.' % collection.fqcn
                 for search_path in search_paths:
                     b_search_path = to_bytes(
                         os.path.join(
@@ -616,13 +591,20 @@ def verify_collections(
                     )
                     if not os.path.isdir(b_search_path):
                         continue
+                    if not _is_installed_collection_dir(b_search_path):
+                        default_err = (
+                            "Collection %s does not have a MANIFEST.json. "
+                            "A MANIFEST.json is expected if the collection has been built "
+                            "and installed via ansible-galaxy" % collection.fqcn
+                        )
+                        continue
 
                     local_collection = Candidate.from_dir_path(
                         b_search_path, artifacts_manager,
                     )
                     break
                 else:
-                    raise AnsibleError(message='Collection %s is not installed in any of the collection paths.' % collection.fqcn)
+                    raise AnsibleError(message=default_err)
 
                 remote_collection = Candidate(
                     collection.fqcn,
@@ -1281,14 +1263,17 @@ def _resolve_depenency_map(
         preferred_candidates,  # type: Optional[Iterable[Candidate]]
         no_deps,  # type: bool
         allow_pre_release,  # type: bool
+        upgrade,  # type: bool
 ):  # type: (...) -> Dict[str, Candidate]
     """Return the resolved dependency map."""
     collection_dep_resolver = build_collection_dependency_resolver(
         galaxy_apis=galaxy_apis,
         concrete_artifacts_manager=concrete_artifacts_manager,
+        user_requirements=requested_requirements,
         preferred_candidates=preferred_candidates,
         with_deps=not no_deps,
         with_pre_releases=allow_pre_release,
+        upgrade=upgrade,
     )
     try:
         return collection_dep_resolver.resolve(

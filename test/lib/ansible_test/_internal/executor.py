@@ -9,7 +9,6 @@ import re
 import time
 import textwrap
 import functools
-import hashlib
 import difflib
 import filecmp
 import random
@@ -44,7 +43,6 @@ from .cloud import (
 from .io import (
     make_dirs,
     open_text_file,
-    read_binary_file,
     read_text_file,
     write_text_file,
 )
@@ -70,6 +68,7 @@ from .util import (
     SUPPORTED_PYTHON_VERSIONS,
     str_to_version,
     version_to_str,
+    get_hash,
 )
 
 from .util_common import (
@@ -150,6 +149,7 @@ HTTPTESTER_HOSTS = (
     'ansible.http.tests',
     'sni1.ansible.http.tests',
     'fail.ansible.http.tests',
+    'self-signed.ansible.http.tests',
 )
 
 
@@ -272,7 +272,9 @@ def get_cryptography_requirement(args, python, python_version):  # type: (Enviro
             # see https://cryptography.io/en/latest/changelog.html#v3-2
             cryptography = 'cryptography < 3.2'
         else:
-            cryptography = 'cryptography'
+            # cryptography 3.4+ fails to install on many systems
+            # this is a temporary work-around until a more permanent solution is available
+            cryptography = 'cryptography < 3.4'
     else:
         # cryptography 2.1+ requires setuptools 18.5+
         # see https://github.com/pyca/cryptography/blob/62287ae18383447585606b9d0765c0f1b8a9777c/setup.py#L26
@@ -295,8 +297,6 @@ def install_command_requirements(args, python_version=None, context=None, enable
     if isinstance(args, ShellConfig):
         if args.raw:
             return
-
-    generate_egg_info(args)
 
     if not args.requirements:
         return
@@ -430,46 +430,6 @@ def pip_list(args, pip):
     """
     stdout = run_command(args, pip + ['list'], capture=True)[0]
     return stdout
-
-
-def generate_egg_info(args):
-    """
-    :type args: EnvironmentConfig
-    """
-    if args.explain:
-        return
-
-    ansible_version = get_ansible_version()
-
-    # inclusion of the version number in the path is optional
-    # see: https://setuptools.readthedocs.io/en/latest/formats.html#filename-embedded-metadata
-    egg_info_path = ANSIBLE_LIB_ROOT + '_core-%s.egg-info' % ansible_version
-
-    if os.path.exists(egg_info_path):
-        return
-
-    egg_info_path = ANSIBLE_LIB_ROOT + '_core.egg-info'
-
-    if os.path.exists(egg_info_path):
-        return
-
-    # minimal PKG-INFO stub following the format defined in PEP 241
-    # required for older setuptools versions to avoid a traceback when importing pkg_resources from packages like cryptography
-    # newer setuptools versions are happy with an empty directory
-    # including a stub here means we don't need to locate the existing file or have setup.py generate it when running from source
-    pkg_info = '''
-Metadata-Version: 1.0
-Name: ansible
-Version: %s
-Platform: UNKNOWN
-Summary: Radically simple IT automation
-Author-email: info@ansible.com
-License: GPLv3+
-''' % get_ansible_version()
-
-    pkg_info_path = os.path.join(egg_info_path, 'PKG-INFO')
-
-    write_text_file(pkg_info_path, pkg_info.lstrip(), create_directories=True)
 
 
 def generate_pip_install(pip, command, packages=None, constraints=None, use_constraints=True, context=None):
@@ -820,7 +780,11 @@ def command_windows_integration(args):
                 # we are running in a Docker container that is linked to the httptester container, we just need to
                 # forward these requests to the linked hostname
                 first_host = HTTPTESTER_HOSTS[0]
-                ssh_options = ["-R", "8080:%s:80" % first_host, "-R", "8443:%s:443" % first_host]
+                ssh_options = [
+                    "-R", "8080:%s:80" % first_host,
+                    "-R", "8443:%s:443" % first_host,
+                    "-R", "8444:%s:444" % first_host
+                ]
             else:
                 # we are running directly and need to start the httptester container ourselves and forward the port
                 # from there manually set so HTTPTESTER env var is set during the run
@@ -1311,6 +1275,10 @@ def start_httptester(args):
             container=443,
         ),
         dict(
+            remote=8444,
+            container=444,
+        ),
+        dict(
             remote=8749,
             container=749,
         ),
@@ -1402,6 +1370,7 @@ def inject_httptester(args):
 rdr pass inet proto tcp from any to any port 80 -> 127.0.0.1 port 8080
 rdr pass inet proto tcp from any to any port 88 -> 127.0.0.1 port 8088
 rdr pass inet proto tcp from any to any port 443 -> 127.0.0.1 port 8443
+rdr pass inet proto tcp from any to any port 444 -> 127.0.0.1 port 8444
 rdr pass inet proto tcp from any to any port 749 -> 127.0.0.1 port 8749
 '''
         cmd = ['pfctl', '-ef', '-']
@@ -1416,6 +1385,7 @@ rdr pass inet proto tcp from any to any port 749 -> 127.0.0.1 port 8749
             (80, 8080),
             (88, 8088),
             (443, 8443),
+            (444, 8444),
             (749, 8749),
         ]
 
@@ -2013,7 +1983,7 @@ class EnvironmentDescription:
         pip_paths = dict((v, find_executable('pip%s' % v, required=False)) for v in sorted(versions))
         program_versions = dict((v, self.get_version([python_paths[v], version_check], warnings)) for v in sorted(python_paths) if python_paths[v])
         pip_interpreters = dict((v, self.get_shebang(pip_paths[v])) for v in sorted(pip_paths) if pip_paths[v])
-        known_hosts_hash = self.get_hash(os.path.expanduser('~/.ssh/known_hosts'))
+        known_hosts_hash = get_hash(os.path.expanduser('~/.ssh/known_hosts'))
 
         for version in sorted(versions):
             self.check_python_pip_association(version, python_paths, pip_paths, pip_interpreters, warnings)
@@ -2152,21 +2122,6 @@ class EnvironmentDescription:
         """
         with open_text_file(path) as script_fd:
             return script_fd.readline().strip()
-
-    @staticmethod
-    def get_hash(path):
-        """
-        :type path: str
-        :rtype: str | None
-        """
-        if not os.path.exists(path):
-            return None
-
-        file_hash = hashlib.sha256()
-
-        file_hash.update(read_binary_file(path))
-
-        return file_hash.hexdigest()
 
 
 class NoChangesDetected(ApplicationWarning):

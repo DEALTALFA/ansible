@@ -46,6 +46,13 @@ lib/ansible/galaxy/collection/__init__.py compile-2.6!skip # 'ansible-galaxy col
 lib/ansible/galaxy/collection/galaxy_api_proxy.py compile-2.6!skip  # 'ansible-galaxy collection' requires 2.7+
 lib/ansible/galaxy/dependency_resolution/dataclasses.py compile-2.6!skip  # 'ansible-galaxy collection' requires 2.7+
 lib/ansible/galaxy/dependency_resolution/providers.py compile-2.6!skip  # 'ansible-galaxy collection' requires 2.7+
+lib/ansible/module_utils/compat/selinux.py import-2.6!skip # pass/fail depends on presence of libselinux.so
+lib/ansible/module_utils/compat/selinux.py import-2.7!skip # pass/fail depends on presence of libselinux.so
+lib/ansible/module_utils/compat/selinux.py import-3.5!skip # pass/fail depends on presence of libselinux.so
+lib/ansible/module_utils/compat/selinux.py import-3.6!skip # pass/fail depends on presence of libselinux.so
+lib/ansible/module_utils/compat/selinux.py import-3.7!skip # pass/fail depends on presence of libselinux.so
+lib/ansible/module_utils/compat/selinux.py import-3.8!skip # pass/fail depends on presence of libselinux.so
+lib/ansible/module_utils/compat/selinux.py import-3.9!skip # pass/fail depends on presence of libselinux.so
 lib/ansible/module_utils/compat/_selectors2.py future-import-boilerplate # ignore bundled
 lib/ansible/module_utils/compat/_selectors2.py metaclass-boilerplate # ignore bundled
 lib/ansible/module_utils/compat/_selectors2.py pylint:blacklisted-name
@@ -72,6 +79,7 @@ lib/ansible/module_utils/six/__init__.py no-basestring
 lib/ansible/module_utils/six/__init__.py no-dict-iteritems
 lib/ansible/module_utils/six/__init__.py no-dict-iterkeys
 lib/ansible/module_utils/six/__init__.py no-dict-itervalues
+lib/ansible/module_utils/six/__init__.py pylint:self-assigning-variable
 lib/ansible/module_utils/six/__init__.py replace-urlopen
 lib/ansible/module_utils/urls.py pylint:blacklisted-name
 lib/ansible/module_utils/urls.py replace-urlopen
@@ -143,7 +151,6 @@ lib/ansible/plugins/lookup/sequence.py pylint:blacklisted-name
 lib/ansible/plugins/strategy/__init__.py pylint:blacklisted-name
 lib/ansible/plugins/strategy/linear.py pylint:blacklisted-name
 lib/ansible/vars/hostvars.py pylint:blacklisted-name
-test/integration/targets/ansible-test/ansible_collections/ns/col/plugins/filter/check_pylint.py pylint:blacklisted-name
 test/integration/targets/ansible-test-docker/ansible_collections/ns/col/plugins/modules/hello.py pylint:relative-beyond-top-level
 test/integration/targets/ansible-test-docker/ansible_collections/ns/col/tests/unit/plugins/module_utils/test_my_util.py pylint:relative-beyond-top-level
 test/integration/targets/ansible-test-docker/ansible_collections/ns/col/tests/unit/plugins/modules/test_hello.py pylint:relative-beyond-top-level
@@ -196,14 +203,15 @@ test/integration/targets/win_script/files/test_script_removes_file.ps1 pslint:PS
 test/integration/targets/win_script/files/test_script_with_args.ps1 pslint:PSAvoidUsingWriteHost # Keep
 test/integration/targets/win_script/files/test_script_with_splatting.ps1 pslint:PSAvoidUsingWriteHost # Keep
 test/integration/targets/windows-minimal/library/win_ping_syntax_error.ps1 pslint!skip
-test/lib/ansible_test/_data/requirements/constraints.txt test-constraints
 test/lib/ansible_test/_data/requirements/integration.cloud.azure.txt test-constraints
 test/lib/ansible_test/_data/requirements/sanity.ps1 pslint:PSCustomUseLiteralPath # Uses wildcards on purpose
 test/lib/ansible_test/_data/sanity/pylint/plugins/string_format.py use-compat-six
 test/lib/ansible_test/_data/setup/ConfigureRemotingForAnsible.ps1 pslint:PSCustomUseLiteralPath
 test/lib/ansible_test/_data/setup/windows-httptester.ps1 pslint:PSCustomUseLiteralPath
+test/support/integration/plugins/module_utils/aws/core.py pylint:property-with-parameters
 test/support/integration/plugins/module_utils/cloud.py future-import-boilerplate
 test/support/integration/plugins/module_utils/cloud.py metaclass-boilerplate
+test/support/integration/plugins/module_utils/cloud.py pylint:isinstance-second-argument-not-valid-type
 test/support/integration/plugins/module_utils/compat/ipaddress.py future-import-boilerplate
 test/support/integration/plugins/module_utils/compat/ipaddress.py metaclass-boilerplate
 test/support/integration/plugins/module_utils/compat/ipaddress.py no-unicode-literals
@@ -212,6 +220,8 @@ test/support/integration/plugins/module_utils/database.py metaclass-boilerplate
 test/support/integration/plugins/module_utils/mysql.py future-import-boilerplate
 test/support/integration/plugins/module_utils/mysql.py metaclass-boilerplate
 test/support/integration/plugins/module_utils/network/common/utils.py future-import-boilerplate
+test/support/network-integration/collections/ansible_collections/ansible/netcommon/plugins/module_utils/network/common/facts/facts.py pylint:unnecessary-comprehension
+test/support/network-integration/collections/ansible_collections/ansible/netcommon/plugins/netconf/default.py pylint:unnecessary-comprehension
 test/support/integration/plugins/module_utils/network/common/utils.py metaclass-boilerplate
 test/support/integration/plugins/module_utils/postgres.py future-import-boilerplate
 test/support/integration/plugins/module_utils/postgres.py metaclass-boilerplate

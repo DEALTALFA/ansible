@@ -11,7 +11,6 @@ import json
 import os
 from collections import namedtuple
 from glob import iglob
-from keyword import iskeyword  # used in _is_fqcn
 
 try:
     from typing import TYPE_CHECKING
@@ -36,22 +35,8 @@ from ansible.galaxy.api import GalaxyAPI
 from ansible.module_utils._text import to_bytes, to_native, to_text
 from ansible.module_utils.six.moves.urllib.parse import urlparse
 from ansible.module_utils.six import raise_from
+from ansible.utils.collection_loader import AnsibleCollectionRef
 from ansible.utils.display import Display
-
-
-try:  # NOTE: py3/py2 compat
-    # FIXME: put somewhere into compat
-    # py2 mypy can't deal with try/excepts
-    _is_py_id = str.isidentifier  # type: ignore[attr-defined]
-except AttributeError:  # Python 2
-    # FIXME: port this to AnsibleCollectionRef.is_valid_collection_name
-    from re import match as _match_pattern
-    from tokenize import Name as _VALID_IDENTIFIER_REGEX
-    _valid_identifier_string_regex = ''.join((_VALID_IDENTIFIER_REGEX, r'\Z'))
-
-    def _is_py_id(tested_str):
-        # Ref: https://stackoverflow.com/a/55802320/595220
-        return bool(_match_pattern(_valid_identifier_string_regex, tested_str))
 
 
 _ALLOW_CONCRETE_POINTER_IN_SOURCE = False  # NOTE: This is a feature flag
@@ -81,16 +66,18 @@ def _is_collection_dir(dir_path):
 
 def _find_collections_in_subdirs(dir_path):
     b_dir_path = to_bytes(dir_path, errors='surrogate_or_strict')
-    galaxy_yml_glob_pattern = os.path.join(
+
+    subdir_glob_pattern = os.path.join(
         b_dir_path,
         # b'*',  # namespace is supposed to be top-level per spec
         b'*',  # collection name
-        _GALAXY_YAML,
     )
-    return (
-        os.path.dirname(galaxy_yml)
-        for galaxy_yml in iglob(galaxy_yml_glob_pattern)
-    )
+
+    for subdir in iglob(subdir_glob_pattern):
+        if os.path.isfile(os.path.join(subdir, _MANIFEST_JSON)):
+            yield subdir
+        elif os.path.isfile(os.path.join(subdir, _GALAXY_YAML)):
+            yield subdir
 
 
 def _is_collection_namespace_dir(tested_str):
@@ -120,18 +107,6 @@ def _is_concrete_artifact_pointer(tested_str):
             _is_collection_dir,
             _is_collection_namespace_dir,
         )
-    )
-
-
-def _is_fqcn(tested_str):
-    # FIXME: port this to AnsibleCollectionRef.is_valid_collection_name
-    if tested_str.count('.') != 1:
-        return False
-
-    return all(
-        # FIXME: keywords and identifiers are different in differnt Pythons
-        not iskeyword(ns_or_name) and _is_py_id(ns_or_name)
-        for ns_or_name in tested_str.split('.')
     )
 
 
@@ -234,7 +209,10 @@ class _ComputedReqKindsMixin:
                     and _is_concrete_artifact_pointer(req_source)
             ):
                 src_path = req_source
-            elif req_name is not None and _is_fqcn(req_name):
+            elif (
+                    req_name is not None
+                    and AnsibleCollectionRef.is_valid_collection_name(req_name)
+            ):
                 req_type = 'galaxy'
             elif (
                     req_name is not None
@@ -280,6 +258,20 @@ class _ComputedReqKindsMixin:
                 req_type = 'file'
                 req_source = src_path
             elif _is_collection_dir(src_path):
+                if _is_installed_collection_dir(src_path) and _is_collection_src_dir(src_path):
+                    # Note that ``download`` requires a dir with a ``galaxy.yml`` and fails if it
+                    # doesn't exist, but if a ``MANIFEST.json`` also exists, it would be used
+                    # instead of the ``galaxy.yml``.
+                    raise AnsibleError(
+                        u"Collection requirement at '{path!s}' has both a {manifest_json!s} "
+                        u"file and a {galaxy_yml!s}.\nThe requirement must either be an installed "
+                        u"collection directory or a source collection directory, not both.".
+                        format(
+                            path=to_text(src_path, errors='surrogate_or_strict'),
+                            manifest_json=to_text(_MANIFEST_JSON),
+                            galaxy_yml=to_text(_GALAXY_YAML),
+                        )
+                    )
                 req_type = 'dir'
                 req_source = src_path
             elif _is_collection_namespace_dir(src_path):
